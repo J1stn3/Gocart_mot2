@@ -1,5 +1,12 @@
+import os
 import flet as ft
+import requests
 from ..controllers.cart_controller import CartController
+
+API_BASE_URL = os.getenv(
+    "API_BASE_URL",
+    "http://127.0.0.1:8001/api"
+)
 
 class OrdersView:
     def __init__(self, page, on_back_to_main, cart_controller: CartController):
@@ -97,7 +104,23 @@ class OrdersView:
         self.display_orders()
 
     def display_orders(self):
-        orders = self.cart_controller.get_completed_orders()
+        try:
+            response = requests.get(f"{API_BASE_URL}/orders")
+            response.raise_for_status()
+            data = response.json()
+            orders = data.get('orders', [])
+        except Exception as e:
+            orders = []
+            error_text = f"Error loading orders: {str(e)}"
+            self.orders_list.controls = [
+                ft.Container(
+                    content=ft.Text(error_text, color="#ff006e", italic=True),
+                    padding=20,
+                    alignment=ft.Alignment.CENTER,
+                )
+            ]
+            self.page.update()
+            return
 
         if not orders:
             self.orders_list.controls = [
@@ -105,7 +128,7 @@ class OrdersView:
                     content=ft.Text("No completed orders yet. Start shopping!",
                                      color=self.primary_color, italic=True),
                     padding=20,
-                    alignment=ft.alignment.Alignment.CENTER,
+                    alignment=ft.Alignment.CENTER,
                 )
             ]
             self.grand_total_text.value = "Total Revenue: ₱0.00"
@@ -121,7 +144,9 @@ class OrdersView:
         total = order.get('total', 0)
 
         items_text = "\n".join([
-            f"  • {item['product'].name} × {item['quantity']} = ₱{item['product'].price * item['quantity']:.2f}"
+            f"  • {item['product']['name']} × {item['quantity']} = ₱{item['product']['price'] * item['quantity']:.2f}"
+            if isinstance(item['product'], dict)
+            else f"  • {item['product'].name} × {item['quantity']} = ₱{item['product'].price * item['quantity']:.2f}"
             for item in items
         ])
 
@@ -141,6 +166,12 @@ class OrdersView:
         )
 
     def clear_all_orders(self, e):
-        if hasattr(self.cart_controller, "service") and hasattr(self.cart_controller.service, "completed_orders"):
-            self.cart_controller.service.completed_orders.clear()
-        self.display_orders()
+        try:
+            response = requests.post(f"{API_BASE_URL}/orders/clear")
+            response.raise_for_status()
+            # Refresh the orders display after clearing
+            self.display_orders()
+        except Exception as error:
+            print(f"Error clearing orders: {str(error)}")
+            # Still refresh display even if there's an error
+            self.display_orders()

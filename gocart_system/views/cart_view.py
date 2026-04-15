@@ -5,7 +5,7 @@ from ..controllers.cart_controller import CartController
 
 API_BASE_URL = os.getenv(
     "API_BASE_URL",
-    f"http://127.0.0.1:{os.getenv('PORT', '61471')}"
+    "http://127.0.0.1:8001/api"
 )
 
 class CartView:

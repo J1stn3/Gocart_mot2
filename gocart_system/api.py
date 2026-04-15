@@ -1,14 +1,24 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 import os
 import uvicorn
-from fastapi.middleware.cors import CORSMiddleware
+import logging
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import existing services
 from .services.product_services import ProductServices
 from .services.cart_on_services import CartOnServices
+from .services.auth_service import AuthenticationService
+from .services.auth_logger import auth_logger
+from .controllers.auth_controller import router as auth_router
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Pydantic models for API requests
 class ProductCreate(BaseModel):
@@ -34,15 +44,32 @@ class ApiPayload(BaseModel):
     quantity: int
 
 # FastAPI app instance
-app = FastAPI(title="GoCart API", description="API for GoCart shopping system")
+app = FastAPI(
+    title="GoCart Secure API",
+    description="Secure API for GoCart shopping system with JWT authentication",
+    version="1.0.0"
+)
 
-# Add CORS middleware to allow browser requests
+# Get allowed origins from environment
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000").split(",")
+environment = os.getenv("ENVIRONMENT", "development")
+
+# Add Security Middleware
+# Trust proxy headers (X-Forwarded-For, X-Forwarded-Proto) in production
+if environment == "production":
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=[host.split("://")[-1].split(":")[0] for host in allowed_origins]
+    )
+
+# Add CORS middleware with secure configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins (adjust for production)
+    allow_origins=allowed_origins if environment != "production" else ["https://yourdomain.com"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+    max_age=600,  # 10 minutes
 )
 
 # Initialize services
@@ -97,7 +124,9 @@ def api_add_to_cart(cart_item: CartAdd):
     """Add item to cart."""
     try:
         result = cart_service.add_to_cart(cart_item.product_name, cart_item.quantity)
-        return {"message": "Item added to cart", "item": result.to_dict()}
+        if result is False:
+            raise ValueError(f"Product '{cart_item.product_name}' not found or insufficient stock")
+        return {"message": f"Added {cart_item.quantity}x '{cart_item.product_name}' to cart", "success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -150,6 +179,18 @@ def api_get_orders():
         return {"orders": orders}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post("/orders/clear")
+def api_clear_orders():
+    """Clear all completed orders."""
+    try:
+        cart_service.completed_orders.clear()
+        return {"message": "All orders cleared"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Include the Authentication router
+app.include_router(auth_router)
 
 # Include the API router
 app.include_router(api_router)

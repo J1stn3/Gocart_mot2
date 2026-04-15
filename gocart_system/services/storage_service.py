@@ -8,10 +8,15 @@ class StorageService:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance.db = DatabaseConnection()
-            cls._instance.db.connect()
         return cls._instance
 
+    def _ensure_connected(self):
+        """Ensure database is connected before operations."""
+        if not self.db._connection or not self.db._connection.is_connected():
+            self.db.connect()
+
     def add_product(self, product):
+        self._ensure_connected()
         connection = self.db.get_connection()
         if connection is None:
             raise ConnectionError("Cannot connect to MySQL database")
@@ -27,6 +32,7 @@ class StorageService:
         return product
 
     def get_products(self):
+        self._ensure_connected()
         connection = self.db.get_connection()
         if connection is None:
             raise ConnectionError("Cannot connect to MySQL database")
@@ -45,6 +51,7 @@ class StorageService:
             self.update_product_by_id(product_id, product)
 
     def update_product_by_id(self, product_id, product):
+        self._ensure_connected()
         connection = self.db.get_connection()
         if connection is None:
             raise ConnectionError("Cannot connect to MySQL database")
@@ -61,6 +68,7 @@ class StorageService:
         products = self.get_products()
         if 0 <= index < len(products):
             product_id = products[index].id
+            self._ensure_connected()
             connection = self.db.get_connection()
             if connection is None:
                 raise ConnectionError("Cannot connect to MySQL database")
@@ -70,6 +78,7 @@ class StorageService:
             cursor.close()
 
     def find_product_by_name(self, name):
+        self._ensure_connected()
         connection = self.db.get_connection()
         if connection is None:
             raise ConnectionError("Cannot connect to MySQL database")
@@ -84,6 +93,7 @@ class StorageService:
         return None
 
     def get_product_by_id(self, product_id):
+        self._ensure_connected()
         connection = self.db.get_connection()
         if connection is None:
             raise ConnectionError("Cannot connect to MySQL database")
