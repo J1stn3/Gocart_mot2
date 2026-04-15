@@ -6,9 +6,10 @@ import pytest
 import requests
 import json
 from typing import Dict, Any
+import os
 
 # Configuration
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = os.getenv("TEST_BASE_URL", "http://127.0.0.1:8001")
 API_URL = f"{BASE_URL}/api/auth"
 
 # Test data

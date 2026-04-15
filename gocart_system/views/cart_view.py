@@ -9,10 +9,11 @@ API_BASE_URL = os.getenv(
 )
 
 class CartView:
-    def __init__(self, page, on_back_to_main, cart_controller):
+    def __init__(self, page, on_back_to_main, cart_controller, auth_manager):
         self.page = page
         self.on_back_to_main = on_back_to_main
         self.cart_controller = cart_controller
+        self.auth_manager = auth_manager
 
         # Futuristic color scheme (matching shopping view)
         self.primary_color = "#00d4ff"   # Cyan
@@ -140,7 +141,11 @@ class CartView:
     def display_cart_items(self):
         """Display cart items."""
         try:
-            response = requests.get(f"{API_BASE_URL}/cart")
+            response = requests.get(
+                f"{API_BASE_URL}/cart",
+                headers=self.auth_manager.get_auth_header(),
+                timeout=10,
+            )
             response.raise_for_status()
             data = response.json()
             cart_items = data.get("cart_items", [])
@@ -149,7 +154,9 @@ class CartView:
             # Convert dicts back to cart item-like objects
             class CartItem:
                 def __init__(self, d):
+                    self.product_id = d["product"]["id"]
                     self.product = type('Product', (), {
+                        'id': d["product"]["id"],
                         'name': d['product']['name'],
                         'price': d['product']['price']
                     })()
@@ -242,7 +249,25 @@ class CartView:
     def remove_from_cart(self, product_name):
         """Remove item from cart."""
         try:
-            response = requests.delete(f"{API_BASE_URL}/cart/{product_name}")
+            # Resolve product id from current cart display
+            response = requests.get(
+                f"{API_BASE_URL}/cart",
+                headers=self.auth_manager.get_auth_header(),
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+            match = next((i for i in data.get("cart_items", []) if i["product"]["name"] == product_name), None)
+            if not match:
+                self._show_status(f"{product_name} not found in cart", self.warning_color)
+                return
+
+            product_id = int(match["product"]["id"])
+            response = requests.delete(
+                f"{API_BASE_URL}/cart/{product_id}",
+                headers=self.auth_manager.get_auth_header(),
+                timeout=10,
+            )
             response.raise_for_status()
             self._show_status(f"Removed {product_name} from cart", self.warning_color)
             self.display_cart_items()
@@ -254,7 +279,11 @@ class CartView:
     def checkout_cart(self, e):
         """Process checkout."""
         try:
-            response = requests.post(f"{API_BASE_URL}/cart/complete")
+            response = requests.post(
+                f"{API_BASE_URL}/cart/complete",
+                headers=self.auth_manager.get_auth_header(),
+                timeout=10,
+            )
             response.raise_for_status()
             data = response.json()
             order = data.get("order", {})
@@ -262,7 +291,15 @@ class CartView:
             self._show_status(f"✅ Checkout successful! Total: ₱{total:.2f}", self.success_color)
             self.display_cart_items()
         except requests.exceptions.RequestException as re:
-            self._show_status(f"API Error: {str(re)}", self.accent_color)
+            detail = None
+            try:
+                if re.response is not None:
+                    body = re.response.json()
+                    detail = body.get("detail") or body.get("message")
+            except Exception:
+                detail = None
+            msg = detail or str(re)
+            self._show_status(f"API Error: {msg}", self.accent_color)
         except Exception as e:
             self._show_status(f"An error occurred: {str(e)}", self.accent_color)
 

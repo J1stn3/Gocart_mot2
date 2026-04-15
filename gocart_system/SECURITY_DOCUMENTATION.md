@@ -103,7 +103,7 @@ Tracks all security events:
 - Unauthorized access attempts
 - Account lockouts
 - Logout events
-
+   
 ## Database Schema
 
 ### Users Table

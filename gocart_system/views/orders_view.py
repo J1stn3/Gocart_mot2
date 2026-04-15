@@ -9,10 +9,11 @@ API_BASE_URL = os.getenv(
 )
 
 class OrdersView:
-    def __init__(self, page, on_back_to_main, cart_controller: CartController):
+    def __init__(self, page, on_back_to_main, cart_controller: CartController, auth_manager):
         self.page = page
         self.on_back_to_main = on_back_to_main
         self.cart_controller = cart_controller
+        self.auth_manager = auth_manager
 
         self.primary_color = "#00d4ff"
         self.secondary_color = "#7c3aed"
@@ -96,7 +97,11 @@ class OrdersView:
         main_column = ft.Column(
             expand=True,
             scroll=ft.ScrollMode.AUTO,
-            controls=[header, orders_section, grand_total_section],
+            controls=[
+                header,
+                orders_section,
+                grand_total_section,
+            ],
         )
 
         self.page.clean()
@@ -105,7 +110,11 @@ class OrdersView:
 
     def display_orders(self):
         try:
-            response = requests.get(f"{API_BASE_URL}/orders")
+            response = requests.get(
+                f"{API_BASE_URL}/orders",
+                headers=self.auth_manager.get_auth_header(),
+                timeout=10,
+            )
             response.raise_for_status()
             data = response.json()
             orders = data.get('orders', [])
@@ -167,7 +176,11 @@ class OrdersView:
 
     def clear_all_orders(self, e):
         try:
-            response = requests.post(f"{API_BASE_URL}/orders/clear")
+            response = requests.post(
+                f"{API_BASE_URL}/orders/clear",
+                headers=self.auth_manager.get_auth_header(),
+                timeout=10,
+            )
             response.raise_for_status()
             # Refresh the orders display after clearing
             self.display_orders()

@@ -1,10 +1,16 @@
 import flet as ft
+import os
+import requests
 from ..controllers.product_controller import ProductController
 from ..controllers.cart_controller import CartController
 
+API_BASE_URL = os.getenv(
+    "API_BASE_URL",
+    "http://127.0.0.1:8001/api"
+)
 
 class MainView:
-    def __init__(self, page, on_shopping_click=None, cart_controller=None):
+    def __init__(self, page, on_shopping_click=None, cart_controller=None, auth_manager=None):
 
         self.page = page
         self.page.title = "Cart-Ons"
@@ -17,10 +23,12 @@ class MainView:
         self.on_cart_click = None  # Will be set by AppManager
         self.on_orders_click = None  # Will be set by AppManager
 
+        # Controllers kept for compatibility but UI is API-driven
         self.product_controller = ProductController()
         self.cart_controller = cart_controller if cart_controller else CartController()
+        self.auth_manager = auth_manager
 
-        self.selected_product_index = None
+        self.selected_product_id = None
 
         # Colorful Professional Palette
         self.primary = "#6366f1"     # Indigo
@@ -254,7 +262,7 @@ class MainView:
                 header,
                 product_input,
                 products_section,
-                cart_section
+                cart_section,
             ],
             spacing=22,
             scroll=ft.ScrollMode.AUTO
@@ -285,7 +293,19 @@ class MainView:
     # --------------------------------------------------
 
     def update_product_table(self):
-        products = self.product_controller.get_products()
+        try:
+            response = requests.get(
+                f"{API_BASE_URL}/products",
+                headers=self.auth_manager.get_auth_header() if self.auth_manager else {},
+                timeout=10,
+            )
+            response.raise_for_status()
+            products = response.json().get("products", [])
+        except Exception as e:
+            self.product_list.controls = [ft.Text(f"Error loading products: {str(e)}", italic=True)]
+            self.page.update()
+            return
+
         if not products:
             self.product_list.controls = [
                 ft.Text("No products available", italic=True)
@@ -297,7 +317,7 @@ class MainView:
         self.page.update()
 
     def _product_card(self, product, index):
-        selected = index == self.selected_product_index
+        selected = self.selected_product_id == product.get("id")
         return ft.Container(
             padding=16,
             border_radius=14,
@@ -312,7 +332,7 @@ class MainView:
                     ft.Column(
                         [
                             ft.Text(
-                                product.name,
+                                product.get("name"),
                                 size=16,
                                 weight=ft.FontWeight.BOLD
                             ),
@@ -323,13 +343,13 @@ class MainView:
                                         padding=6,
                                         border_radius=6,
                                         content=ft.Text(
-                                            f"₱{product.price}",
+                                            f"₱{product.get('price')}",
                                             color="white",
                                             size=12
                                         )
                                     ),
                                     ft.Text(
-                                        f"Stock: {product.quantity}",
+                                        f"Stock: {product.get('quantity')}",
                                         color="white70"
                                     )
                                 ]
@@ -339,7 +359,7 @@ class MainView:
                     ),
                     self._button(
                         "Select",
-                        lambda e: self.select_product(index),
+                        lambda e, pid=product.get("id"): self.select_product(pid),
                         ft.Icons.CHECK,
                         self.secondary,
                         120
@@ -391,29 +411,60 @@ class MainView:
         )
 
     def update_cart_table(self):
-        items = self.cart_controller.get_cart_items()
+        try:
+            response = requests.get(
+                f"{API_BASE_URL}/cart",
+                headers=self.auth_manager.get_auth_header() if self.auth_manager else {},
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+            items = data.get("cart_items", [])
+            total = float(data.get("total_price", 0))
+        except Exception as e:
+            self.cart_list.controls = [ft.Text(f"Error loading cart: {str(e)}", italic=True)]
+            self.total_text.value = "Total: ₱0.00"
+            self.page.update()
+            return
+
         if not items:
-            self.cart_list.controls = [
-                ft.Text("Your cart is empty 🛒", italic=True)
-            ]
+            self.cart_list.controls = [ft.Text("Your cart is empty 🛒", italic=True)]
         else:
-            self.cart_list.controls = [
-                self._create_cart_item_card(i) for i in items
-            ]
-        self.total_text.value = f"Total: ₱{self.cart_controller.get_total_price():.2f}"
+            # Reuse existing card renderer by adapting shape
+            class _Item:
+                def __init__(self, d):
+                    self.product = type("P", (), {"id": d["product"]["id"], "name": d["product"]["name"], "price": d["product"]["price"]})()
+                    self.quantity = d["quantity"]
+                def get_total_price(self):
+                    return float(self.product.price) * int(self.quantity)
+            self.cart_list.controls = [self._create_cart_item_card(_Item(i)) for i in items]
+
+        self.total_text.value = f"Total: ₱{total:.2f}"
         self.page.update()
 
     # --------------------------------------------------
     # Product Selection
     # --------------------------------------------------
 
-    def select_product(self, index):
-        products = self.product_controller.get_products()
-        self.selected_product_index = index
-        p = products[index]
-        self.name_field.value = p.name
-        self.price_field.value = str(p.price)
-        self.quantity_field.value = str(p.quantity)
+    def select_product(self, product_id):
+        self.selected_product_id = int(product_id) if product_id is not None else None
+        try:
+            response = requests.get(
+                f"{API_BASE_URL}/products",
+                headers=self.auth_manager.get_auth_header() if self.auth_manager else {},
+                timeout=10,
+            )
+            response.raise_for_status()
+            products = response.json().get("products", [])
+            p = next((x for x in products if int(x.get("id")) == self.selected_product_id), None)
+            if not p:
+                self._show_status("Product not found", self.accent)
+                return
+            self.name_field.value = p.get("name", "")
+            self.price_field.value = str(p.get("price", ""))
+            self.quantity_field.value = str(p.get("quantity", ""))
+        except Exception as e:
+            self._show_status(f"Error selecting product: {str(e)}", self.accent)
         self.update_product_table()
 
     # --------------------------------------------------
@@ -422,7 +473,27 @@ class MainView:
 
     def remove_from_cart(self, product_name):
         try:
-            self.cart_controller.remove_from_cart(product_name)
+            # Resolve product_id from cart
+            response = requests.get(
+                f"{API_BASE_URL}/cart",
+                headers=self.auth_manager.get_auth_header() if self.auth_manager else {},
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+            match = next((i for i in data.get("cart_items", []) if i["product"]["name"] == product_name), None)
+            if not match:
+                self._show_status("Item not found in cart", self.warning)
+                return
+
+            product_id = int(match["product"]["id"])
+            response = requests.delete(
+                f"{API_BASE_URL}/cart/{product_id}",
+                headers=self.auth_manager.get_auth_header() if self.auth_manager else {},
+                timeout=10,
+            )
+            response.raise_for_status()
+
             self.update_product_table()
             self.update_cart_table()
         except ValueError as ve:
@@ -432,19 +503,22 @@ class MainView:
 
     def add_to_cart(self, e):
         qty = self.cart_quantity_field.value.strip()
-        if self.selected_product_index is None:
+        if self.selected_product_id is None:
             self._show_status("Select a product to add to cart", self.accent)
             return
 
         try:
-            product = self.product_controller.get_products()[self.selected_product_index]
-            added = self.cart_controller.add_to_cart(product.name, qty)
-            if not added:
-                self._show_status("Could not add to cart (check stock)", self.accent)
-                return
+            response = requests.post(
+                f"{API_BASE_URL}/cart/add",
+                json={"product_id": int(self.selected_product_id), "quantity": int(qty or "1")},
+                headers=self.auth_manager.get_auth_header() if self.auth_manager else {},
+                timeout=10,
+            )
+            response.raise_for_status()
 
-            self._show_status(f"Added {qty} x {product.name} to cart", self.success)
+            self._show_status("Added to cart", self.success)
             self.update_cart_table()
+            self.update_product_table()
         except ValueError as ve:
             self._show_status(str(ve), self.accent)
         except Exception as e:
@@ -460,7 +534,13 @@ class MainView:
         quantity = self.quantity_field.value.strip()
 
         try:
-            self.product_controller.create_product(name, price, quantity)
+            response = requests.post(
+                f"{API_BASE_URL}/products",
+                json={"name": name, "price": float(price), "quantity": int(quantity)},
+                headers=self.auth_manager.get_auth_header() if self.auth_manager else {},
+                timeout=10,
+            )
+            response.raise_for_status()
             self._show_status(f"Added {name} successfully!", self.success)
             self.clear_fields()
             self.update_product_table()
@@ -470,7 +550,7 @@ class MainView:
             self._show_status(f"An error occurred: {str(e)}", self.accent)
 
     def update_product(self, e):
-        if self.selected_product_index is None:
+        if self.selected_product_id is None:
             self._show_status("Select a product to update", self.accent)
             return
 
@@ -479,10 +559,16 @@ class MainView:
         quantity = self.quantity_field.value.strip()
 
         try:
-            self.product_controller.update_product(self.selected_product_index, name, price, quantity)
+            response = requests.put(
+                f"{API_BASE_URL}/products/{int(self.selected_product_id)}",
+                json={"name": name, "price": float(price), "quantity": int(quantity)},
+                headers=self.auth_manager.get_auth_header() if self.auth_manager else {},
+                timeout=10,
+            )
+            response.raise_for_status()
             self._show_status(f"Updated {name} successfully!", self.success)
             self.clear_fields()
-            self.selected_product_index = None
+            self.selected_product_id = None
             self.update_product_table()
         except ValueError as ve:
             self._show_status(str(ve), self.accent)
@@ -490,17 +576,20 @@ class MainView:
             self._show_status(f"An error occurred: {str(e)}", self.accent)
 
     def delete_product(self, e):
-        if self.selected_product_index is None:
+        if self.selected_product_id is None:
             self._show_status("Select a product to delete", self.accent)
             return
 
         try:
-            products = self.product_controller.get_products()
-            product = products[self.selected_product_index]
-            self.product_controller.delete_product(self.selected_product_index)
-            self._show_status(f"Deleted {product.name}!", self.warning)
+            response = requests.delete(
+                f"{API_BASE_URL}/products/{int(self.selected_product_id)}",
+                headers=self.auth_manager.get_auth_header() if self.auth_manager else {},
+                timeout=10,
+            )
+            response.raise_for_status()
+            self._show_status("Deleted product!", self.warning)
             self.clear_fields()
-            self.selected_product_index = None
+            self.selected_product_id = None
             self.update_product_table()
         except ValueError as ve:
             self._show_status(str(ve), self.accent)

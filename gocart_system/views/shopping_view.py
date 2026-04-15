@@ -10,11 +10,12 @@ API_BASE_URL = os.getenv(
 )
 
 class ShoppingView:
-    def __init__(self, page, on_back_to_main, cart_controller):
+    def __init__(self, page, on_back_to_main, cart_controller, auth_manager):
         self.page = page
         self.on_back_to_main = on_back_to_main
         self.product_controller = ProductController()
         self.cart_controller = cart_controller
+        self.auth_manager = auth_manager
         
         # Futuristic color scheme
         self.primary_color = "#00d4ff"   # Cyan
@@ -180,7 +181,11 @@ class ShoppingView:
     def display_products(self):
         """Display products based on search query."""
         try:
-            response = requests.get(f"{API_BASE_URL}/products")
+            response = requests.get(
+                f"{API_BASE_URL}/products",
+                headers=self.auth_manager.get_auth_header(),
+                timeout=10,
+            )
             response.raise_for_status()
             data = response.json()
             products = data.get("products", [])
@@ -188,6 +193,7 @@ class ShoppingView:
             # Convert dicts back to product-like objects for compatibility
             class Product:
                 def __init__(self, d):
+                    self.id = d.get("id")
                     self.name = d['name']
                     self.price = d['price']
                     self.quantity = d['quantity']
@@ -306,7 +312,9 @@ class ShoppingView:
             
             response = requests.post(
                 f"{API_BASE_URL}/cart/add",
-                json={"product_name": self.selected_product.name, "quantity": quantity}
+                json={"product_id": int(self.selected_product.id), "quantity": quantity},
+                headers=self.auth_manager.get_auth_header(),
+                timeout=10,
             )
             response.raise_for_status()
             
@@ -317,7 +325,15 @@ class ShoppingView:
             self.cart_quantity_field.value = "1"
             self.display_products()  # Refresh to show updated stock
         except requests.exceptions.RequestException as re:
-            self._show_status(f"❌ API Error: {str(re)}", self.accent_color)
+            detail = None
+            try:
+                if re.response is not None:
+                    body = re.response.json()
+                    detail = body.get("detail") or body.get("message")
+            except Exception:
+                detail = None
+            msg = detail or str(re)
+            self._show_status(f"❌ API Error: {msg}", self.accent_color)
         except ValueError as ve:
             self._show_status(f"❌ Invalid quantity: {str(ve)}", self.accent_color)
         except Exception as e:

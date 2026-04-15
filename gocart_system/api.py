@@ -11,9 +11,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import existing services
 from .services.product_services import ProductServices
-from .services.cart_on_services import CartOnServices
 from .services.auth_service import AuthenticationService
 from .services.auth_logger import auth_logger
+from .services.cart_db_service import CartDbService
+from .services.auth_middleware import verify_jwt_token
 from .controllers.auth_controller import router as auth_router
 
 # Setup logging
@@ -31,12 +32,14 @@ class ProductUpdate(BaseModel):
     price: float
     quantity: int
 
-class CartAdd(BaseModel):
-    product_name: str
-    quantity: int
+class ProductPatch(BaseModel):
+    name: Optional[str] = None
+    price: Optional[float] = None
+    quantity: Optional[int] = None
 
-class CartRemove(BaseModel):
-    product_name: str
+class CartAdd(BaseModel):
+    product_id: int
+    quantity: int
 
 class ApiPayload(BaseModel):
     name: str
@@ -74,14 +77,14 @@ app.add_middleware(
 
 # Initialize services
 product_service = ProductServices()
-cart_service = CartOnServices()
+cart_service = CartDbService()
 
 # Create API router for /api/* routes
 api_router = APIRouter(prefix="/api", tags=["api"])
 
 # Products endpoints (under /api prefix)
 @api_router.get("/products")
-def get_api_products():
+def get_api_products(user: dict = Depends(verify_jwt_token)):
     """Get all products from the database."""
     try:
         products = product_service.get_products()
@@ -90,7 +93,7 @@ def get_api_products():
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/products")
-def create_api_product(product: ProductCreate):
+def create_api_product(product: ProductCreate, user: dict = Depends(verify_jwt_token)):
     """Create a new product."""
     try:
         product_service.create_product(product.name, product.price, product.quantity)
@@ -100,18 +103,67 @@ def create_api_product(product: ProductCreate):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@api_router.put("/products/{index}")
-def update_api_product(index: int, product: ProductUpdate):
-    """Update an existing product by index."""
+@api_router.put("/products/{product_id}")
+def update_api_product(product_id: int, product: ProductUpdate, user: dict = Depends(verify_jwt_token)):
+    """Update an existing product by id."""
+    try:
+        # ProductServices updates by index; map id -> index for backward compatibility.
+        products = product_service.get_products()
+        idx = next((i for i, p in enumerate(products) if p.id == product_id), None)
+        if idx is None:
+            raise HTTPException(status_code=404, detail="Product not found")
+        product_service.update_product(idx, product.name, product.price, product.quantity)
+        return {"message": "Product updated successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@api_router.patch("/products/{product_id}")
+def patch_api_product(product_id: int, patch: ProductPatch, user: dict = Depends(verify_jwt_token)):
+    """Partially update a product by id."""
+    try:
+        products = product_service.get_products()
+        existing = next((p for p in products if p.id == product_id), None)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        name = patch.name if patch.name is not None else existing.name
+        price = patch.price if patch.price is not None else existing.price
+        quantity = patch.quantity if patch.quantity is not None else existing.quantity
+
+        idx = next((i for i, p in enumerate(products) if p.id == product_id), None)
+        product_service.update_product(idx, name, price, quantity)
+        return {"message": "Product patched successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@api_router.delete("/products/{product_id}")
+def delete_api_product(product_id: int, user: dict = Depends(verify_jwt_token)):
+    """Delete a product by id."""
+    try:
+        products = product_service.get_products()
+        idx = next((i for i, p in enumerate(products) if p.id == product_id), None)
+        if idx is None:
+            raise HTTPException(status_code=404, detail="Product not found")
+        product_service.delete_product(idx)
+        return {"message": "Product deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# Optional legacy endpoints: index-based update/delete (supports /api/products/0 style workflows)
+@api_router.put("/products/index/{index}")
+def update_api_product_by_index(index: int, product: ProductUpdate, user: dict = Depends(verify_jwt_token)):
+    """Update a product by index (legacy)."""
     try:
         product_service.update_product(index, product.name, product.price, product.quantity)
         return {"message": "Product updated successfully"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@api_router.delete("/products/{index}")
-def delete_api_product(index: int):
-    """Delete a product by index."""
+@api_router.delete("/products/index/{index}")
+def delete_api_product_by_index(index: int, user: dict = Depends(verify_jwt_token)):
+    """Delete a product by index (legacy)."""
     try:
         product_service.delete_product(index)
         return {"message": "Product deleted successfully"}
@@ -120,71 +172,69 @@ def delete_api_product(index: int):
 
 # Cart endpoints (under /api prefix)
 @api_router.post("/cart/add")
-def api_add_to_cart(cart_item: CartAdd):
+def api_add_to_cart(cart_item: CartAdd, user: dict = Depends(verify_jwt_token)):
     """Add item to cart."""
     try:
-        result = cart_service.add_to_cart(cart_item.product_name, cart_item.quantity)
-        if result is False:
-            raise ValueError(f"Product '{cart_item.product_name}' not found or insufficient stock")
-        return {"message": f"Added {cart_item.quantity}x '{cart_item.product_name}' to cart", "success": True}
+        cart_service.add_to_cart(int(user["user_id"]), cart_item.product_id, cart_item.quantity)
+        return {"message": "Added to cart", "success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @api_router.get("/cart")
-def api_get_cart():
+def api_get_cart(user: dict = Depends(verify_jwt_token)):
     """Get cart items and total price."""
     try:
-        items = cart_service.get_cart_items()
-        total = cart_service.get_total_price()
+        items, total = cart_service.get_cart(int(user["user_id"]))
         return {
-            "cart_items": [item.to_dict() for item in items],
-            "total_price": total
+            "cart_items": [item.to_api_dict() for item in items],
+            "total_price": float(total)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@api_router.delete("/cart/{product_name}")
-def api_remove_from_cart(product_name: str):
-    """Remove item from cart by product name."""
+@api_router.delete("/cart/{product_id}")
+def api_remove_from_cart(product_id: int, user: dict = Depends(verify_jwt_token)):
+    """Remove item from cart by product id."""
     try:
-        cart_service.remove_from_cart(product_name)
-        return {"message": f"Removed {product_name} from cart"}
+        cart_service.remove_from_cart(int(user["user_id"]), product_id)
+        return {"message": "Removed from cart"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @api_router.post("/cart/clear")
-def api_clear_cart():
+def api_clear_cart(user: dict = Depends(verify_jwt_token)):
     """Clear all items from cart."""
     try:
-        cart_service.clear_cart()
+        cart_service.clear_cart(int(user["user_id"]))
         return {"message": "Cart cleared"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/cart/complete")
-def api_complete_order():
+def api_complete_order(user: dict = Depends(verify_jwt_token)):
     """Complete the order."""
     try:
-        order = cart_service.complete_order()
+        order = cart_service.checkout(int(user["user_id"]))
         return {"message": "Order completed", "order": order}
     except Exception as e:
+        logger.exception("Checkout failed")
         raise HTTPException(status_code=400, detail=str(e))
 
 # Orders endpoints (under /api prefix)
 @api_router.get("/orders")
-def api_get_orders():
+def api_get_orders(user: dict = Depends(verify_jwt_token)):
     """Get completed orders."""
     try:
-        orders = cart_service.get_completed_orders()
+        orders = cart_service.list_orders(int(user["user_id"]))
         return {"orders": orders}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/orders/clear")
-def api_clear_orders():
+def api_clear_orders(user: dict = Depends(verify_jwt_token)):
     """Clear all completed orders."""
     try:
-        cart_service.completed_orders.clear()
+        cart_service.clear_orders(int(user["user_id"]))
         return {"message": "All orders cleared"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

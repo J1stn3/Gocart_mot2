@@ -39,7 +39,8 @@ class AppManager:
         self.main_view = MainView(
             self.page,
             on_shopping_click=self.show_shopping_view,
-            cart_controller=self.cart_controller
+            cart_controller=self.cart_controller,
+            auth_manager=self.auth_manager,
         )
         self.main_view.on_cart_click = self.show_cart_view
         self.main_view.on_orders_click = self.show_orders_view
@@ -52,7 +53,8 @@ class AppManager:
         self.shopping_view = ShoppingView(
             self.page,
             on_back_to_main=self.show_main_view,
-            cart_controller=self.cart_controller
+            cart_controller=self.cart_controller,
+            auth_manager=self.auth_manager,
         )
 
     def show_cart_view(self):
@@ -60,7 +62,8 @@ class AppManager:
         self.cart_view = CartView(
             self.page,
             on_back_to_main=self.show_main_view,
-            cart_controller=self.cart_controller
+            cart_controller=self.cart_controller,
+            auth_manager=self.auth_manager,
         )
 
     def show_orders_view(self):
@@ -68,7 +71,8 @@ class AppManager:
         self.orders_view = OrdersView(
             self.page,
             on_back_to_main=self.show_main_view,
-            cart_controller=self.cart_controller
+            cart_controller=self.cart_controller,
+            auth_manager=self.auth_manager,
         )
     
     def on_logout(self):

@@ -4,9 +4,10 @@ Authentication service for user registration, login, and account management.
 import os
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple
-import sqlite3
+from mysql.connector import Error
 from .security_service import PasswordHasher, PasswordValidator, InputValidator
 from .jwt_service import JWTService
+from .database_connection import DatabaseConnection
 from ..models.user import User, UserRole
 
 
@@ -15,54 +16,17 @@ class AuthenticationService:
     
     def __init__(self, db_connection=None):
         """Initialize authentication service."""
-        self.db_connection = db_connection
+        self.db_connection = db_connection or DatabaseConnection()
         self.max_login_attempts = int(os.getenv("MAX_LOGIN_ATTEMPTS", "5"))
         self.lockout_duration = int(os.getenv("LOCKOUT_DURATION_MINUTES", "15"))
-        self._init_user_table()
+        # Tables are ensured by DatabaseConnection.connect()
+        self.db_connection.connect()
     
-    def _init_user_table(self):
-        """Initialize user table if it doesn't exist."""
-        try:
-            # Note: Adapt this for your database system (MySQL, PostgreSQL, etc.)
-            # This is an SQLite example - modify for your actual DB
-            db_path = os.getenv("DB_PATH", "gocart.db")
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username VARCHAR(50) UNIQUE NOT NULL,
-                    email VARCHAR(255) UNIQUE NOT NULL,
-                    password_hash TEXT NOT NULL,
-                    role VARCHAR(20) DEFAULT 'user',
-                    is_active BOOLEAN DEFAULT TRUE,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME,
-                    last_login DATETIME,
-                    failed_login_attempts INTEGER DEFAULT 0,
-                    is_locked BOOLEAN DEFAULT FALSE,
-                    locked_until DATETIME
-                )
-            """)
-            
-            # Create sessions table for refresh tokens
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS user_sessions (
-                    session_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    refresh_token TEXT UNIQUE NOT NULL,
-                    expires_at DATETIME NOT NULL,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    is_valid BOOLEAN DEFAULT TRUE,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
-                )
-            """)
-            
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            print(f"Error initializing user table: {e}")
+    def _get_conn(self):
+        conn = self.db_connection.get_connection()
+        if conn is None:
+            raise ConnectionError("Cannot connect to MySQL database")
+        return conn
     
     def register_user(
         self,
@@ -98,12 +62,11 @@ class AuthenticationService:
         
         # Check if user already exists
         try:
-            db_path = os.getenv("DB_PATH", "gocart.db")
-            conn = sqlite3.connect(db_path)
+            conn = self._get_conn()
             cursor = conn.cursor()
-            
-            cursor.execute("SELECT user_id FROM users WHERE username = ? OR email = ?", (username, email))
+            cursor.execute("SELECT user_id FROM users WHERE username = %s OR email = %s", (username, email))
             if cursor.fetchone():
+                cursor.close()
                 conn.close()
                 return False, None, "Username or email already exists"
             
@@ -111,13 +74,14 @@ class AuthenticationService:
             password_hash = PasswordHasher.hash_password(password)
             
             # Insert user
-            cursor.execute("""
-                INSERT INTO users (username, email, password_hash, role)
-                VALUES (?, ?, ?, ?)
-            """, (username, email, password_hash, role))
+            cursor.execute(
+                "INSERT INTO users (username, email, password_hash, role) VALUES (%s, %s, %s, %s)",
+                (username, email, password_hash, role),
+            )
             
             user_id = cursor.lastrowid
             conn.commit()
+            cursor.close()
             conn.close()
             
             # Create user object
@@ -133,6 +97,8 @@ class AuthenticationService:
             
             return True, user, "User registered successfully"
         
+        except Error as e:
+            return False, None, f"Registration error: {str(e)}"
         except Exception as e:
             return False, None, f"Registration error: {str(e)}"
     
@@ -148,20 +114,20 @@ class AuthenticationService:
             Tuple of (success, token_dict, message)
         """
         try:
-            db_path = os.getenv("DB_PATH", "gocart.db")
-            conn = sqlite3.connect(db_path)
+            conn = self._get_conn()
             cursor = conn.cursor()
             
             # Fetch user
             cursor.execute("""
                 SELECT user_id, username, email, password_hash, role, is_active, 
                        is_locked, locked_until, failed_login_attempts
-                FROM users WHERE username = ? OR email = ?
+                FROM users WHERE username = %s OR email = %s
             """, (username, username))
             
             result = cursor.fetchone()
             
             if not result:
+                cursor.close()
                 conn.close()
                 return False, None, "Invalid username or password"
             
@@ -170,21 +136,23 @@ class AuthenticationService:
             
             # Check if user is active
             if not is_active:
+                cursor.close()
                 conn.close()
                 return False, None, "User account is deactivated"
             
             # Check if account is locked
             if is_locked and locked_until:
                 try:
-                    locked_until_dt = datetime.fromisoformat(locked_until)
+                    locked_until_dt = locked_until if isinstance(locked_until, datetime) else datetime.fromisoformat(str(locked_until))
                     if datetime.utcnow() < locked_until_dt:
+                        cursor.close()
                         conn.close()
                         return False, None, "Account is locked due to too many login attempts"
                     else:
                         # Unlock account
                         cursor.execute("""
-                            UPDATE users SET is_locked = ?, locked_until = ?, failed_login_attempts = ?
-                            WHERE user_id = ?
+                            UPDATE users SET is_locked = %s, locked_until = %s, failed_login_attempts = %s
+                            WHERE user_id = %s
                         """, (False, None, 0, user_id))
                         conn.commit()
                 except ValueError:
@@ -198,13 +166,14 @@ class AuthenticationService:
                 locked_until = None
                 
                 if is_now_locked:
-                    locked_until = (datetime.utcnow() + timedelta(minutes=self.lockout_duration)).isoformat()
+                    locked_until = datetime.utcnow() + timedelta(minutes=self.lockout_duration)
                 
                 cursor.execute("""
-                    UPDATE users SET failed_login_attempts = ?, is_locked = ?, locked_until = ?
-                    WHERE user_id = ?
+                    UPDATE users SET failed_login_attempts = %s, is_locked = %s, locked_until = %s
+                    WHERE user_id = %s
                 """, (new_attempts, is_now_locked, locked_until, user_id))
                 conn.commit()
+                cursor.close()
                 conn.close()
                 
                 if is_now_locked:
@@ -213,9 +182,9 @@ class AuthenticationService:
             
             # Reset failed login attempts
             cursor.execute("""
-                UPDATE users SET failed_login_attempts = 0, is_locked = 0, last_login = ?
-                WHERE user_id = ?
-            """, (datetime.utcnow().isoformat(), user_id))
+                UPDATE users SET failed_login_attempts = 0, is_locked = 0, last_login = %s
+                WHERE user_id = %s
+            """, (datetime.utcnow(), user_id))
             conn.commit()
             
             # Create tokens
@@ -224,14 +193,16 @@ class AuthenticationService:
             # Store refresh token in database
             cursor.execute("""
                 INSERT INTO user_sessions (user_id, refresh_token, expires_at)
-                VALUES (?, ?, ?)
-            """, (user_id, tokens['refresh_token'], 
-                  (datetime.utcnow() + timedelta(days=7)).isoformat()))
+                VALUES (%s, %s, %s)
+            """, (user_id, tokens['refresh_token'], datetime.utcnow() + timedelta(days=7)))
             conn.commit()
+            cursor.close()
             conn.close()
             
             return True, tokens, "Login successful"
         
+        except Error as e:
+            return False, None, f"Login error: {str(e)}"
         except Exception as e:
             return False, None, f"Login error: {str(e)}"
     
@@ -256,16 +227,16 @@ class AuthenticationService:
                 return False, None, "Token is not a refresh token"
             
             # Check if refresh token exists in database
-            db_path = os.getenv("DB_PATH", "gocart.db")
-            conn = sqlite3.connect(db_path)
+            conn = self._get_conn()
             cursor = conn.cursor()
             
             cursor.execute("""
                 SELECT user_id FROM user_sessions 
-                WHERE refresh_token = ? AND is_valid = TRUE AND expires_at > ?
-            """, (refresh_token, datetime.utcnow().isoformat()))
+                WHERE refresh_token = %s AND is_valid = TRUE AND expires_at > %s
+            """, (refresh_token, datetime.utcnow()))
             
             result = cursor.fetchone()
+            cursor.close()
             conn.close()
             
             if not result:
@@ -281,6 +252,8 @@ class AuthenticationService:
             
             return True, new_access_token, "Access token refreshed successfully"
         
+        except Error as e:
+            return False, None, f"Token refresh error: {str(e)}"
         except Exception as e:
             return False, None, f"Token refresh error: {str(e)}"
     
@@ -295,20 +268,22 @@ class AuthenticationService:
             Tuple of (success, message)
         """
         try:
-            db_path = os.getenv("DB_PATH", "gocart.db")
-            conn = sqlite3.connect(db_path)
+            conn = self._get_conn()
             cursor = conn.cursor()
             
             cursor.execute("""
                 UPDATE user_sessions SET is_valid = FALSE
-                WHERE refresh_token = ?
+                WHERE refresh_token = %s
             """, (refresh_token,))
             
             conn.commit()
+            cursor.close()
             conn.close()
             
             return True, "Logout successful"
         
+        except Error as e:
+            return False, f"Logout error: {str(e)}"
         except Exception as e:
             return False, f"Logout error: {str(e)}"
     
@@ -323,16 +298,16 @@ class AuthenticationService:
             User object or None
         """
         try:
-            db_path = os.getenv("DB_PATH", "gocart.db")
-            conn = sqlite3.connect(db_path)
+            conn = self._get_conn()
             cursor = conn.cursor()
             
             cursor.execute("""
                 SELECT user_id, username, email, role, is_active, created_at, last_login
-                FROM users WHERE user_id = ?
+                FROM users WHERE user_id = %s
             """, (user_id,))
             
             result = cursor.fetchone()
+            cursor.close()
             conn.close()
             
             if not result:
@@ -346,10 +321,11 @@ class AuthenticationService:
                 email=email,
                 role=UserRole(role),
                 is_active=is_active,
-                created_at=datetime.fromisoformat(created_at) if created_at else None,
-                last_login=datetime.fromisoformat(last_login) if last_login else None,
+                created_at=created_at if isinstance(created_at, datetime) else (datetime.fromisoformat(str(created_at)) if created_at else None),
+                last_login=last_login if isinstance(last_login, datetime) else (datetime.fromisoformat(str(last_login)) if last_login else None),
             )
         
-        except Exception as e:
-            print(f"Error fetching user: {e}")
+        except Error:
+            return None
+        except Exception:
             return None
