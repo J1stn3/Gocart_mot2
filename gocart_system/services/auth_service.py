@@ -221,10 +221,10 @@ class AuthenticationService:
             is_valid, payload, error = JWTService.verify_token(refresh_token)
             
             if not is_valid:
-                return False, None, f"Invalid refresh token: {error}"
+                return False, None, "Invalid or unauthorized refresh token."
             
             if payload.get('token_type') != 'refresh':
-                return False, None, "Token is not a refresh token"
+                return False, None, "Invalid or unauthorized refresh token."
             
             # Check if refresh token exists in database
             conn = self._get_conn()
@@ -240,7 +240,7 @@ class AuthenticationService:
             conn.close()
             
             if not result:
-                return False, None, "Refresh token is invalid or expired"
+                return False, None, "Invalid or unauthorized refresh token."
             
             # Create new access token
             new_access_token = JWTService.create_access_token(

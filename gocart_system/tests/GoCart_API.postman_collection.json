@@ -312,7 +312,7 @@
               "path": ["api", "cart", "complete"]
             }
           }
-        }
+        },
         {
           "name": "Clear Cart",
           "request": {

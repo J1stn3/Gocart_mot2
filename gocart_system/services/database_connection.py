@@ -209,6 +209,23 @@ class DatabaseConnection:
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sms_messages (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                phone_number VARCHAR(20) NOT NULL,
+                message TEXT NOT NULL,
+                status VARCHAR(20) DEFAULT 'pending',
+                sent_at DATETIME NULL,
+                delivered_at DATETIME NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_sms_user_status (user_id, status),
+                INDEX idx_sms_created (created_at),
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            )
+        """)
+
         # If tables already existed with smaller decimals, widen them.
         # (Safe to run repeatedly; if already widened, MySQL is a no-op.)
         for stmt in [

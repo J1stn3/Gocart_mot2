@@ -1,11 +1,12 @@
 """
-Flet login and authentication UI.
+Flet login and authentication UI - Modern Design
 """
 import flet as ft
 import requests
 import json
 from typing import Callable, Optional
 import os
+from ..design_system import Colors, Typography, Spacing, BorderRadius, Shadows, Styles, ModernComponents
 
 
 class AuthenticationManager:
@@ -172,7 +173,7 @@ class AuthenticationManager:
 
 
 class LoginView:
-    """Login UI component."""
+    """Modern Login UI component."""
     
     def __init__(
         self,
@@ -184,41 +185,145 @@ class LoginView:
         self.on_login_success = on_login_success
         self.auth_manager = auth_manager
         self.is_register_mode = False
+        
+        # Setup page theme
+        self.page.theme_mode = ft.ThemeMode.DARK
+        self.page.bgcolor = Colors.BACKGROUND
     
-    def build(self) -> ft.Column:
-        """Build login UI."""
+    def build(self) -> ft.Stack:
+        """Build modern login UI."""
         
-        # Title
-        title = ft.Text("GoCart Secure System", size=32, weight="bold")
-        subtitle = ft.Text("Login to your account", size=16, color=ft.Colors.GREY_700)
+        # Background with gradient
+        background = ModernComponents.gradient_background()
         
-        # Input fields
+        # Main login card
+        login_card = self._create_login_card()
+        
+        # Floating elements for visual appeal
+        floating_shapes = self._create_floating_shapes()
+        
+        return ft.Stack([
+            background,
+            floating_shapes,
+            ft.Container(
+                content=login_card,
+                alignment=ft.Alignment.CENTER,
+                padding=Spacing.LG,
+                expand=True,
+            )
+        ], expand=True)
+    
+    def _create_login_card(self) -> ft.Container:
+        """Create the main login/signup card."""
+        
+        # Title section
+        title_section = ft.Container(
+            content=ft.Column([
+                ft.Icon(
+                    ft.Icons.SHOPPING_CART,
+                    size=48,
+                    color=Colors.PRIMARY
+                ),
+                ft.Text(
+                    "Welcome to GoCart",
+                    style=Typography.H1,
+                    text_align=ft.TextAlign.CENTER
+                ),
+                ft.Text(
+                    "Secure Shopping System",
+                    style=Typography.BODY,
+                    text_align=ft.TextAlign.CENTER
+                ),
+            ], spacing=Spacing.SM, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            margin=ft.margin.only(bottom=Spacing.XL)
+        )
+        
+        # Form fields
+        form_fields = self._create_form_fields()
+        
+        # Action buttons
+        action_buttons = self._create_action_buttons()
+        
+        # Toggle section
+        toggle_section = self._create_toggle_section()
+        
+        # Card content
+        card_content = ft.Column([
+            title_section,
+            form_fields,
+            action_buttons,
+            toggle_section,
+        ], spacing=Spacing.LG, tight=True)
+        
+        return ModernComponents.animated_card(card_content)
+    
+    def _create_form_fields(self) -> ft.Column:
+        """Create form input fields."""
+        
+        # Username/Email field
         self.username_field = ft.TextField(
             label="Username or Email",
-            width=300,
+            prefix_icon=ft.Icons.PERSON,
+            width=350,
+            border_radius=BorderRadius.MD,
+            filled=True,
+            bgcolor=Colors.SURFACE_LIGHT,
+            border_color=Colors.BORDER,
+            focused_border_color=Colors.SECONDARY,
+            cursor_color=Colors.SECONDARY,
+            text_style=ft.TextStyle(size=14, color=Colors.TEXT_PRIMARY),
+            label_style=ft.TextStyle(size=12, color=Colors.TEXT_MUTED),
             on_change=self._on_input_change
         )
         
+        # Password field
         self.password_field = ft.TextField(
             label="Password",
+            prefix_icon=ft.Icons.LOCK,
             password=True,
             can_reveal_password=True,
-            width=300,
+            width=350,
+            border_radius=BorderRadius.MD,
+            filled=True,
+            bgcolor=Colors.SURFACE_LIGHT,
+            border_color=Colors.BORDER,
+            focused_border_color=Colors.SECONDARY,
+            cursor_color=Colors.SECONDARY,
+            text_style=ft.TextStyle(size=14, color=Colors.TEXT_PRIMARY),
+            label_style=ft.TextStyle(size=12, color=Colors.TEXT_MUTED),
             on_change=self._on_input_change
         )
         
-        # Additional fields for registration
+        # Registration fields (hidden initially)
         self.email_field = ft.TextField(
             label="Email",
-            width=300,
+            prefix_icon=ft.Icons.EMAIL,
+            width=350,
+            border_radius=BorderRadius.MD,
+            filled=True,
+            bgcolor=Colors.SURFACE_LIGHT,
+            border_color=Colors.BORDER,
+            focused_border_color=Colors.SECONDARY,
+            cursor_color=Colors.SECONDARY,
+            text_style=ft.TextStyle(size=14, color=Colors.TEXT_PRIMARY),
+            label_style=ft.TextStyle(size=12, color=Colors.TEXT_MUTED),
             visible=False,
         )
         
         self.confirm_password_field = ft.TextField(
             label="Confirm Password",
+            prefix_icon=ft.Icons.LOCK,
             password=True,
             can_reveal_password=True,
-            width=300,
+            width=350,
+            border_radius=BorderRadius.MD,
+            filled=True,
+            bgcolor=Colors.SURFACE_LIGHT,
+            border_color=Colors.BORDER,
+            focused_border_color=Colors.SECONDARY,
+            cursor_color=Colors.SECONDARY,
+            text_style=ft.TextStyle(size=14, color=Colors.TEXT_PRIMARY),
+            label_style=ft.TextStyle(size=12, color=Colors.TEXT_MUTED),
             visible=False,
         )
         
@@ -226,61 +331,84 @@ class LoginView:
         self.message_text = ft.Text(
             value="",
             size=12,
-            color=ft.Colors.RED_600,
             text_align=ft.TextAlign.CENTER,
+            animate_opacity=ft.Animation(300, ft.AnimationCurve.EASE_OUT)
         )
         
-        # Login button
+        return ft.Column([
+            self.username_field,
+            self.password_field,
+            self.email_field,
+            self.confirm_password_field,
+            self.message_text,
+        ], spacing=Spacing.MD, tight=True)
+    
+    def _create_action_buttons(self) -> ft.Container:
+        """Create action buttons."""
+        
         self.login_btn = ft.ElevatedButton(
-            "LOGIN",
-            width=300,
-            height=50,
+            "Sign In",
+            width=350,
+            height=48,
             on_click=self._on_login_click,
-            style=ft.ButtonStyle(
-                shape=ft.RoundedRectangleBorder(radius=8),
-                text_style=ft.TextStyle(size=16, weight="bold")
-            )
-        )
-        
-        # Toggle button
-        self.toggle_btn = ft.TextButton(
-            "Don't have an account? Register here",
-            on_click=self._toggle_mode
-        )
-        
-        # Build layout
-        self.form_column = ft.Column(
-            controls=[
-                ft.Container(height=20),
-                title,
-                subtitle,
-                ft.Container(height=20),
-                self.username_field,
-                self.password_field,
-                self.email_field,
-                self.confirm_password_field,
-                ft.Container(height=10),
-                self.message_text,
-                ft.Container(height=10),
-                self.login_btn,
-                ft.Container(height=10),
-                self.toggle_btn,
-            ],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=10,
+            style=Styles.button_primary(),
+            icon=ft.Icons.LOGIN,
         )
         
         return ft.Container(
-            content=self.form_column,
-            alignment=ft.Alignment.CENTER,
-            expand=True,
+            content=self.login_btn,
+            margin=ft.margin.symmetric(vertical=Spacing.MD)
         )
+    
+    def _create_toggle_section(self) -> ft.Container:
+        """Create mode toggle section."""
+        
+        self.toggle_text = ft.Text(
+            "Don't have an account? Sign Up",
+            size=14,
+            weight=ft.FontWeight.W_600,
+            color=Colors.SECONDARY,
+        )
+        
+        self.toggle_btn = ft.TextButton(
+            content=self.toggle_text,
+            on_click=self._toggle_mode,
+            style=ft.ButtonStyle(
+                color={
+                    ft.ControlState.DEFAULT: Colors.SECONDARY,
+                    ft.ControlState.HOVERED: Colors.SECONDARY_LIGHT,
+                },
+            )
+        )
+        
+        return ft.Container(
+            content=self.toggle_btn,
+            alignment=ft.Alignment.CENTER
+        )
+    
+    def _create_floating_shapes(self) -> ft.Stack:
+        """Create floating decorative shapes."""
+        
+        shapes = []
+        for i in range(5):
+            shape = ft.Container(
+                width=60 + i * 20,
+                height=60 + i * 20,
+                border_radius=30 + i * 10,
+                bgcolor=ft.Colors.with_opacity(0.1, Colors.PRIMARY if i % 2 == 0 else Colors.SECONDARY),
+                animate_position=ft.Animation(2000 + i * 500, ft.AnimationCurve.EASE_IN_OUT),
+                left=50 + i * 100,
+                top=100 + i * 80,
+            )
+            shapes.append(shape)
+        
+        return ft.Stack(shapes, expand=True)
     
     def _on_input_change(self, e):
         """Clear error message on input change."""
         if self.message_text.value:
             self.message_text.value = ""
-            self.message_text.color = ft.Colors.RED_600
+            self.message_text.color = Colors.ERROR
             self.page.update()
     
     def _on_login_click(self, e):
@@ -303,6 +431,7 @@ class LoginView:
     def _login(self, username: str, password: str):
         """Perform login."""
         self.login_btn.disabled = True
+        self.login_btn.text = "Signing In..."
         self.page.update()
         
         success, message = self.auth_manager.login(username, password)
@@ -315,6 +444,7 @@ class LoginView:
             self._show_error(message)
         
         self.login_btn.disabled = False
+        self.login_btn.text = "Sign In" if not self.is_register_mode else "Sign Up"
         self.page.update()
     
     def _register(self, username: str, password: str):
@@ -331,6 +461,7 @@ class LoginView:
             return
         
         self.login_btn.disabled = True
+        self.login_btn.text = "Creating Account..."
         self.page.update()
         
         success, message = self.auth_manager.register(username, email, password)
@@ -347,6 +478,7 @@ class LoginView:
             self._show_error(message)
         
         self.login_btn.disabled = False
+        self.login_btn.text = "Sign Up"
         self.page.update()
     
     def _toggle_mode(self, e):
@@ -354,13 +486,13 @@ class LoginView:
         self.is_register_mode = not self.is_register_mode
         
         if self.is_register_mode:
-            self.login_btn.text = "REGISTER"
-            self.toggle_btn.text = "Already have an account? Login here"
+            self.login_btn.text = "Sign Up"
+            self.toggle_text.value = "Already have an account? Sign In"
             self.email_field.visible = True
             self.confirm_password_field.visible = True
         else:
-            self.login_btn.text = "LOGIN"
-            self.toggle_btn.text = "Don't have an account? Register here"
+            self.login_btn.text = "Sign In"
+            self.toggle_text.value = "Don't have an account? Sign Up"
             self.email_field.visible = False
             self.confirm_password_field.visible = False
             self.message_text.value = ""
@@ -370,11 +502,13 @@ class LoginView:
     def _show_error(self, message: str):
         """Show error message."""
         self.message_text.value = message
-        self.message_text.color = ft.Colors.RED_600
+        self.message_text.color = Colors.ERROR
+        self.message_text.opacity = 1.0
         self.page.update()
     
     def _show_success(self, message: str):
         """Show success message."""
         self.message_text.value = message
-        self.message_text.color = ft.Colors.GREEN_600
+        self.message_text.color = Colors.SUCCESS
+        self.message_text.opacity = 1.0
         self.page.update()

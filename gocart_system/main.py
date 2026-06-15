@@ -1,6 +1,7 @@
 import os
 import threading
 import flet as ft
+
 from .views.main_view import MainView
 from .views.shopping_view import ShoppingView
 from .views.cart_view import CartView
@@ -15,9 +16,9 @@ API_URL = f"http://{API_HOST}:{API_PORT}"
 class AppManager:
     def __init__(self, page: ft.Page, auth_manager: AuthenticationManager):
         self.page = page
-        self.page.title = "GoCart - Secure Shopping System"
+        self.page.title = "GoCart - Modern Shopping System"
         self.page.theme_mode = ft.ThemeMode.DARK
-        self.page.bgcolor = "#0a0e27"
+        self.page.bgcolor = "#0a0e27"  # Colors.BACKGROUND
         
         # Authentication manager
         self.auth_manager = auth_manager
@@ -96,6 +97,8 @@ def start_api_server():
 def show_login_screen(page: ft.Page):
     """Display login screen."""
     page.clean()
+    page.vertical_alignment = ft.MainAxisAlignment.CENTER
+    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     
     auth_manager = AuthenticationManager(api_url=API_URL)
     
@@ -117,5 +120,5 @@ def main(page: ft.Page):
     show_login_screen(page)
 
 if __name__ == "__main__":
-    print(f"Starting FastAPI API on http://{API_HOST}:{API_PORT}")
+    print(f"Starting GoCart - API at http://{API_HOST}:{API_PORT}")
     ft.run(main)

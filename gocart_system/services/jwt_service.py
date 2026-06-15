@@ -178,17 +178,22 @@ class JWTService:
             auth_header: Authorization header value
         
         Returns:
-            Token string or None
+            Token string or None if missing or malformed
         """
         if not auth_header:
             return None
         
-        parts = auth_header.split()
+        # Split into at most 2 parts to handle extra whitespace
+        parts = auth_header.split(None, 1)
         
         if len(parts) != 2 or parts[0].lower() != "bearer":
             return None
         
-        return parts[1]
+        token = parts[1].strip()
+        if not token:
+            return None
+        
+        return token
     
     @staticmethod
     def create_token_pair(user_id: int, username: str, email: str, role: str) -> Dict[str, str]:

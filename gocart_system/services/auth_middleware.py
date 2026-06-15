@@ -11,6 +11,62 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+async def _validate_token(request: Request) -> dict:
+    """Validate JWT token from request and return payload. Raises HTTPException on failure."""
+    auth_header = request.headers.get("Authorization")
+    token = JWTService.extract_token_from_header(auth_header)
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token is required and cannot be omitted.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    is_valid, payload, error = JWTService.verify_token(token)
+
+    if not is_valid:
+        reason = error or "Invalid token"
+        auth_logger.log_unauthorized_access(
+            endpoint=request.url.path,
+            reason=reason,
+            ip_address=request.client.host if request.client else None,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or unauthorized token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if payload.get("token_type") != "access":
+        auth_logger.log_unauthorized_access(
+            endpoint=request.url.path,
+            reason="Invalid token type",
+            ip_address=request.client.host if request.client else None,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or unauthorized token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    required_fields = ["user_id", "username", "email", "role"]
+    missing = [f for f in required_fields if f not in payload]
+    if missing:
+        auth_logger.log_unauthorized_access(
+            endpoint=request.url.path,
+            reason=f"Missing required claims: {', '.join(missing)}",
+            ip_address=request.client.host if request.client else None,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or unauthorized token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return payload
+
+
 class RBACVerifier:
     """Role-Based Access Control verifier."""
     
@@ -47,30 +103,7 @@ def require_auth(func: Callable) -> Callable:
     """
     @wraps(func)
     async def wrapper(request: Request, *args, **kwargs):
-        auth_header = request.headers.get("Authorization")
-        token = JWTService.extract_token_from_header(auth_header)
-        
-        if not token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing authentication token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        is_valid, payload, error = JWTService.verify_token(token)
-        
-        if not is_valid:
-            auth_logger.log_unauthorized_access(
-                endpoint=request.url.path,
-                reason=error or "Invalid token",
-                ip_address=request.client.host if request.client else None,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=error or "Invalid token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
+        payload = await _validate_token(request)
         request.state.user = payload
         return await func(request, *args, **kwargs)
     
@@ -89,32 +122,7 @@ def require_roles(required_roles: List[str]) -> Callable:
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def wrapper(request: Request, *args, **kwargs):
-            # First check authentication
-            auth_header = request.headers.get("Authorization")
-            token = JWTService.extract_token_from_header(auth_header)
-            
-            if not token:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Missing authentication token",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            
-            is_valid, payload, error = JWTService.verify_token(token)
-            
-            if not is_valid:
-                auth_logger.log_unauthorized_access(
-                    endpoint=request.url.path,
-                    reason=error or "Invalid token",
-                    ip_address=request.client.host if request.client else None,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=error or "Invalid token",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            
-            # Check role
+            payload = await _validate_token(request)
             user_role = payload.get("role", "user")
             if not RBACVerifier.verify_role(required_roles, user_role):
                 auth_logger.log_unauthorized_access(
@@ -126,7 +134,6 @@ def require_roles(required_roles: List[str]) -> Callable:
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"Insufficient permissions. Required roles: {required_roles}",
                 )
-            
             request.state.user = payload
             return await func(request, *args, **kwargs)
         
@@ -150,31 +157,7 @@ async def verify_jwt_token(request: Request) -> dict:
     Returns:
         Decoded token payload
     """
-    auth_header = request.headers.get("Authorization")
-    token = JWTService.extract_token_from_header(auth_header)
-    
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authentication token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    is_valid, payload, error = JWTService.verify_token(token)
-    
-    if not is_valid:
-        auth_logger.log_unauthorized_access(
-            endpoint=request.url.path,
-            reason=error or "Invalid token",
-            ip_address=request.client.host if request.client else None,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=error or "Invalid token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    return payload
+    return await _validate_token(request)
 
 
 def verify_rbac_role(*required_roles: str):
